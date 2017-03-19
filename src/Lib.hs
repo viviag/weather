@@ -5,73 +5,81 @@
 
 module Lib where
 
-import qualified Condition
-import qualified Sys
-
 import Data.Aeson
-import Data.Proxy
+import qualified Data.Proxy as Proxy
 import Data.Semigroup ((<>))
-import Data.Text (split, pack, unpack, empty)
+import Data.Time.Clock.POSIX (POSIXTime, posixSecondsToUTCTime)
 import GHC.Generics (Generic)
 
 import Network.HTTP.Client (newManager, defaultManagerSettings)
 import qualified Options.Applicative as Opt
-import qualified Options.Applicative.Builder as Opt
+import Options.Applicative.Builder ()
 import qualified Servant.API as Net
 import qualified Servant.Client as Net
 import System.Posix.Env (getEnv)
 
+-- |Reason to take out:
+-- name collisions and wishing to use generic FromJSON instances
+import qualified Condition
+import qualified Sys
+
 type Press = Float
 type Temperature = Float
 
+-- |Here and then are records corresponding to
+-- https://openweathermap.org/current
 data Coord = Coord
-  { lon :: Float
-  , lat :: Float
+  { lon :: Float -- ^ Longitude of place
+  , lat :: Float -- ^ Latitude of place
   } deriving (Generic, Show)
 
+-- Optional fields - reason not to derive generics
 data Dat = Dat
-  { temp :: Temperature
-  , pressure :: Press
-  , humidity :: Int
-  , temp_min :: Temperature
-  , temp_max :: Temperature
-  , sea_level :: Maybe Press
-  , grnd_level :: Maybe Press
+  { temp :: Temperature -- ^ Temperarure, Kelvin
+  , pressure :: Press -- ^ Atmospheric pressure, hPa
+  , humidity :: Int -- ^ Percentile of humidity
+  , temp_min :: Temperature -- ^ Miminal temperature for broad locations
+  , temp_max :: Temperature -- ^ Maximal temperature for broad locations
+  , sea_level :: Maybe Press -- ^ Pressure on a sea level, hPa
+  , grnd_level :: Maybe Press -- ^ Pressure on a ground level, hPa
   } deriving Show
 
 data Wind = Wind
-  { speed :: Float
-  , deg :: Float
+  { speed :: Float -- ^ Wind speed, meter/sec
+  , deg :: Float -- ^ Wind direction, degrees
   } deriving (Generic, Show)
 
 data Clouds = Clouds
-  { all :: Int
+  { all :: Int -- ^ Cloudness, %
   } deriving (Generic, Show)
 
+-- Name of field in json starts from integer, need to specify FromJSON instance
 data Rain = Rain
-  { r3h :: Int
+  { r3h :: Int -- ^ Rain volume for last 3 hours
   } deriving Show
 
 data Snow = Snow
-  { s3h :: Int
+  { s3h :: Int -- ^ Snow volume for last 3 hours
   } deriving Show
 
+-- Optionals
 data Weather = Weather
-  { coord :: Coord
-  , weather :: [Condition.Condition]
-  , base :: String
-  , main :: Dat
-  , wind :: Wind
-  , clouds :: Maybe Clouds
-  , rain :: Maybe Rain
-  , snow :: Maybe Snow
-  , dt :: Int
-  , sys :: Sys.Sys
-  , id :: Int
-  , name :: String
-  , cod :: Int
+  { coord :: Coord -- ^ Location
+  , weather :: [Condition.Condition] -- ^ array of weather conditions
+  , base :: String -- ^ Internal
+  , main :: Dat -- ^ Weather data
+  , wind :: Wind -- ^ Wind data
+  , clouds :: Maybe Clouds -- ^ Clouds data
+  , rain :: Maybe Rain -- ^ Rain data
+  , snow :: Maybe Snow -- ^ Snow data
+  , dt :: POSIXTime -- ^ Time of calculation, unix, UTC
+  , sys :: Sys.Sys -- ^ General info about location
+  , id :: Int -- ^ weather id
+  , name :: String -- ^ Location Name
+  , cod :: Int -- ^ code, which server returns on a request
   } deriving Show
 
+-- .:! - optionally exists
 instance FromJSON Weather where
   parseJSON = withObject "init" $ \v -> Weather
               <$> v .: "coord"
@@ -106,55 +114,64 @@ instance FromJSON Snow where
   parseJSON = withObject "snow" $ \v -> Snow
                           <$> v .: "3h"
 
--- Type of request to api.openweathermap.org
+-- |Type of request to api.openweathermap.org
+-- :> - equivalent to / or concatenation of one level parameters.
 type Api        = "weather" Net.:> Net.QueryParam "q" String
                             Net.:> Net.QueryParam "APPID" String
                             Net.:> Net.Get '[Net.JSON] Weather
+        -- Alternative request
          Net.:<|> "weather" Net.:> Net.QueryParam "lat" String 
                             Net.:> Net.QueryParam "lon" String 
                             Net.:> Net.QueryParam "APPID" String
                             Net.:> Net.Get '[Net.JSON] Weather
 
--- connection to api (http://haskell-servant.readthedocs.io/en/stable/tutorial/Client.html)
-weatherCity :: Maybe String   -- City name
-            -> Maybe String   -- API key
+-- |Connection to api
+-- (http://haskell-servant.readthedocs.io/en/stable/tutorial/Client.html)
+-- Here and then Maybe in request parameters - params interpreted as options
+weatherCity :: Maybe String   -- ^ City name
+            -> Maybe String   -- ^ API key
             -> Net.ClientM Weather
-weatherCoord :: Maybe String    -- Latitude (not parsed to int yet)
-             -> Maybe String    -- Longitude (also not)
-             -> Maybe String    -- API key
+weatherCoord :: Maybe String    -- ^ Latitude (not parsed to int yet)
+             -> Maybe String    -- ^ Longitude (also not)
+             -> Maybe String    -- ^ API key
              -> Net.ClientM Weather
 
-api :: Proxy Api  -- Needed to bind api and response handlers
-api = Proxy
+api :: Proxy.Proxy Api  -- Needed to bind api and response handlers
+api = Proxy.Proxy
 
+-- Constucting correspondance between API and API calls
 weatherCity Net.:<|> weatherCoord = Net.client api
 
--- Constructing queries
-queryCity :: Maybe String -- Api key
-          -> Maybe String -- City name
+-- Constructing parametric queries
+queryCity :: Maybe String -- ^ Api key
+          -> Maybe String -- ^ City name
           -> Net.ClientM Weather
-queryCity key name = do
-  weather <- weatherCity name key
-  return weather
+queryCity key city = do
+  weath <- weatherCity city key
+  return weath
 
-queryCoord :: Maybe String -- Api key
-           -> Maybe String -- Latitude
-           -> Maybe String -- Longitude
+queryCoord :: Maybe String -- ^ Api key
+           -> Maybe String -- ^ Latitude
+           -> Maybe String -- ^ Longitude
            -> Net.ClientM Weather
-queryCoord key lat lon = do
-  weather <- weatherCoord lat lon key
-  return weather
+queryCoord key latid long = do
+  weath <- weatherCoord latid long key
+  return weath
 
--- Here to be switching skin for queries, will parse args.
-query :: Maybe String -- API key
-      -> [String] -- Parameters
+-- Switching skin for queries.
+query :: Maybe String -- ^ API key
+      -> [String] -- ^ Parameters
       -> Net.ClientM Weather
 query key (x:xs)
   | xs == [] = queryCity key (Just x)
   | otherwise = queryCoord key (Just x) (Just (head xs))
+-- |never reached due to error from parser.
+-- needed to avoid warning.
+query key [] = queryCity key (Just "Moscow")
 
--- Printer
-weatherPrint :: Weather -> IO ()
+-- |Printer
+weatherPrint :: Weather -- ^ Weather record to print
+             -> IO ()
 weatherPrint x = do
   putStrLn $ "Coordinates: " ++ show (coord x)
   putStrLn $ "Conditions: " ++ show (weather x)
@@ -162,40 +179,43 @@ weatherPrint x = do
   case rain x of
     Nothing -> do
       return ()
-    Just (r3h) -> do
-      print r3h
+    Just (item) -> do
+      print item
   case clouds x of
     Nothing -> do
       return ()
-    Just (all) -> do
-      print all
+    Just (item) -> do
+      print item
   case snow x of
     Nothing -> do
       return ()
-    Just (s3h) -> do
-      print s3h
+    Just (item) -> do
+      print item
   putStrLn "Country info (sunrise and sunset):"
   putStrLn (Sys.country (sys x))
-  putStrLn "In Unix time format"
   case Sys.sunrise (sys x) of
     Nothing -> do
       return ()
     Just (sunrise) -> do
-      print sunrise
+      print $ posixSecondsToUTCTime sunrise
   case Sys.sunset (sys x) of
     Nothing -> do
       return ()
     Just (sunset) -> do
-      print sunset
+      print $ posixSecondsToUTCTime sunset
   putStrLn "Date:"
-  print $ dt x
+  print $ posixSecondsToUTCTime $ dt x
   putStrLn $ "In location: " ++ (name x)
 
--- main
+-- Main - read command line, call API, print
 weatherCall :: IO ()
 weatherCall = do
+  -- Connection manager, used by servant
   manager <- newManager defaultManagerSettings
+  -- unix library getEnv, looks up and don't fall.
   key <- getEnv "OPENWEATHER"
+  -- |argument parser with direct execution from optparse.
+  -- " " - end mark of Opt.str
   args <- Opt.execParser (
             Opt.info 
               (Opt.some (Opt.argument Opt.str (Opt.metavar "Location"))) 
@@ -203,6 +223,7 @@ weatherCall = do
                <> Opt.progDesc "Calls OpenWeatherMap API"
                <> Opt.header "Parser")
           )
+  -- Running query via manager, result is instance of Either
   result <- Net.runClientM
               (query key args) (
                 Net.ClientEnv manager (
@@ -215,5 +236,5 @@ weatherCall = do
               )
   case result of
     Left err -> putStrLn $ "Error: " ++ show err
-    Right (weather) -> do
-      weatherPrint weather
+    Right (weath) -> do
+      weatherPrint weath

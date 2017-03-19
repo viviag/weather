@@ -4,15 +4,15 @@
 module Sys where
 
 import Data.Aeson
-import Data.Time.Clock (UTCTime)
+import Data.Time.Clock.POSIX (POSIXTime)
 
 data Sys = Sys
-  { typ :: Maybe Int
-  , id :: Maybe Int
-  , message :: Float
-  , country :: String
-  , sunrise :: Maybe Int
-  , sunset :: Maybe Int
+  { typ :: Maybe Int -- ^ Internal parameter
+  , id :: Maybe Int -- ^ Internal
+  , message :: Float -- ^ Internal
+  , country :: String -- ^ Country code
+  , sunrise :: Maybe POSIXTime -- ^ Sunrise time, unix, UTC
+  , sunset :: Maybe POSIXTime -- ^ Sunset time, unix, UTC
   } deriving Show
 
 instance FromJSON Sys where
